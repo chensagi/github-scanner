@@ -1,0 +1,38 @@
+# Ignore environment variables file (contains API tokens)
+.env
+
+# Ignore compiled binary files
+*.exe
+*.out
+*.o
+*.a
+*.so
+
+# Ignore Go build artifacts
+bin/
+pkg/
+*.test
+
+# Ignore dependency directories (if using Go modules)
+vendor/
+
+# Ignore IDE and editor files
+.vscode/
+.idea/
+*.iml
+
+# Ignore logs and temporary files
+*.log
+*.tmp
+*.swp
+*.swo
+
+# Ignore coverage and debugging files
+*.cover
+*.prof
+*.dump
+__debug_bin
+
+# Ignore macOS and Linux system files
+.DS_Store
+Thumbs.db
