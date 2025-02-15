@@ -6,6 +6,7 @@ import (
 	"log"
 	"github.com/open-policy-agent/opa/v1/rego"
 	"github.com/google/go-github/v69/github"
+	pb "github-scanner/src/pb"
 )
 
 // GitHubClient is a reusable client instance
@@ -30,7 +31,7 @@ type RepositoryInfo struct {
 	DefaultBranch string                  `json:"default_branch"`
 	LastUpdated   string                  `json:"last_updated"`
 	Permissions   []RepositoryPermissions `json:"permissions"`
-	ScanResult    bool                    `json:"scan_result"` 
+	ScanResult    string                  `json:"scan_result"` 
 }
 
 // Function to evaluate a Rego policy against input data
@@ -73,12 +74,48 @@ func InitGitHubClient() {
 	}
 }
 
-// ScanOrganization retrieves repositories and their access details and evaluates them against a policy
-func ScanOrganization(org string, policy string) {
+// ScanOrganizationForGRPC calls ScanOrganization and converts results for gRPC
+func ScanOrganizationForGRPC(org string, policy string) []*pb.RepositoryInfo {
+	scannedRepos := ScanOrganization(org, policy)
+	var grpcRepos []*pb.RepositoryInfo
+
+	for _, repo := range scannedRepos {
+		pbRepoInfo := &pb.RepositoryInfo{
+			Name:          repo.Name,
+			FullName:      repo.FullName,
+			Owner:         repo.Owner,
+			Visibility:    repo.Visibility,
+			Private:       repo.Private,
+			Description:   repo.Description,
+			RepoUrl:       repo.RepoURL,
+			DefaultBranch: repo.DefaultBranch,
+			LastUpdated:   repo.LastUpdated,
+			ScanResult:    repo.ScanResult,
+		}
+
+		// Convert permissions
+		for _, perm := range repo.Permissions {
+			pbRepoInfo.Permissions = append(pbRepoInfo.Permissions, &pb.RepositoryPermissions{
+				Username: perm.Username,
+				Role:     perm.Role,
+				Source:   perm.Source,
+			})
+		}
+
+		grpcRepos = append(grpcRepos, pbRepoInfo)
+	}
+
+	return grpcRepos
+}
+
+func ScanOrganization(org string, policy string) []RepositoryInfo {
 	InitGitHubClient()
 	ctx := context.Background()
 	opt := &github.RepositoryListByOrgOptions{Type: "all"}
 	var allRepos []*github.Repository
+	var scannedRepos []RepositoryInfo
+
+	log.Printf("Fetching repositories for organization: %s", org)
 
 	// Fetch all repositories in the organization
 	for {
@@ -88,30 +125,39 @@ func ScanOrganization(org string, policy string) {
 		}
 
 		allRepos = append(allRepos, repos...)
+		log.Printf("Fetched %d repositories so far...", len(allRepos))
+
 		if resp.NextPage == 0 {
+			log.Println("No more pages to fetch.")
 			break
 		}
 		opt.Page = resp.NextPage
 	}
 
-	fmt.Printf("Found %d repositories in organization: %s\n", len(allRepos), org)
+	log.Printf("Total repositories found: %d", len(allRepos))
 
 	// Process each repository
 	for _, repo := range allRepos {
 		repoInfo := scanRepository(ctx, org, repo)
+		log.Printf("Processing repository: %s", repoInfo.FullName)
 
 		// Evaluate repository against policy
 		success, err := evaluatePolicy(policy, repoInfo)
 		if err != nil {
 			log.Printf("Error evaluating policy for %s: %v", repoInfo.FullName, err)
-			repoInfo.ScanResult = false
+			repoInfo.ScanResult = err.Error() // Assign error message as ScanResult
+		} else if success {
+			repoInfo.ScanResult = "Success"
 		} else {
-			repoInfo.ScanResult = success
+			repoInfo.ScanResult = "Failure"
 		}
 
-		// Print the results
-		printRepositoryInfo(repoInfo)
+		// Store in list instead of printing immediately
+		scannedRepos = append(scannedRepos, repoInfo)
 	}
+
+	log.Println("Scan complete. Returning results.")
+	return scannedRepos
 }
 
 // scanRepository retrieves repository metadata and permissions
@@ -203,31 +249,23 @@ func NormalizeRepoData(repo *github.Repository, permissions []RepositoryPermissi
 	}
 }
 
-// printRepositoryInfo displays structured repository data with scan result
 func printRepositoryInfo(repo RepositoryInfo) {
-	fmt.Printf("\nRepository: %s\n", repo.FullName)
-	fmt.Printf("Visibility: %s\n", repo.Visibility)
-	fmt.Printf("Private: %v\n", repo.Private)
-	fmt.Printf("Owner: %s\n", repo.Owner)
-	fmt.Printf("Default Branch: %s\n", repo.DefaultBranch)
-	fmt.Printf("Last Updated: %s\n", repo.LastUpdated)
-	fmt.Printf("Description: %s\n", repo.Description)
-	fmt.Printf("Repository URL: %s\n", repo.RepoURL)
+	fmt.Printf("\nRepository: %-30s | Owner: %-15s | Visibility: %-10s | Scan Result: %-10s\n",
+		repo.FullName, repo.Owner, repo.Visibility, repo.ScanResult)
 
-	// Show OPA Scan Result
-	if repo.ScanResult {
-		fmt.Println("OPA Scan Result: SUCCESS")
-	} else {
-		fmt.Println("OPA Scan Result: FAILURE")
-	}
+	fmt.Printf("   URL: %s\n", repo.RepoURL)
+	fmt.Printf("   Description: %s\n", repo.Description)
+	fmt.Printf("   Last Updated: %s\n", repo.LastUpdated)
+	fmt.Printf("   Default Branch: %s\n", repo.DefaultBranch)
 
-	fmt.Println("Permissions:")
+	// Print permissions
+	fmt.Println("   Permissions:")
 	if len(repo.Permissions) == 0 {
-		fmt.Println("  No collaborators found.")
+		fmt.Println("   - No collaborators found.")
 	} else {
 		for _, perm := range repo.Permissions {
-			fmt.Printf("  - %s: %s (source: %s)\n", perm.Username, perm.Role, perm.Source)
+			fmt.Printf("   - User: %-20s | Role: %-10s | Source: %s\n", perm.Username, perm.Role, perm.Source)
 		}
 	}
-	fmt.Println("--------------------------------------------------")
+	fmt.Println("------------------------------------------------------------")
 }

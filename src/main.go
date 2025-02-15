@@ -41,4 +41,9 @@ func main() {
 
 	// Fetch repositories and scan them
 	ScanOrganization(org, policy)
+
+	fmt.Println("Starting gRPC Server for GitHub Scanner (Org:", org, ")")
+
+	// Start the gRPC server
+	StartGRPCServer("50051")
 }

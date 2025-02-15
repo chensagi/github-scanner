@@ -1,0 +1,38 @@
+syntax = "proto3";
+
+package pb;
+
+option go_package = "github-scanner/src/pb;pb";
+
+service PolicyService {
+  rpc ScanRepositories (PolicyRequest) returns (PolicyResponse);
+}
+
+message PolicyRequest {
+  string policy = 1;
+}
+
+message RepositoryPermissions {
+  string username = 1;
+  string role = 2;
+  string source = 3;
+}
+
+message RepositoryInfo {
+  string name = 1;
+  string full_name = 2;
+  string owner = 3;
+  string visibility = 4;
+  bool private = 5;
+  string description = 6;
+  string repo_url = 7;
+  string default_branch = 8;
+  string last_updated = 9;
+  repeated RepositoryPermissions permissions = 10;
+  string scan_result = 11;
+}
+
+message PolicyResponse {
+  repeated RepositoryInfo repositories = 1;
+  string error = 2;
+}
