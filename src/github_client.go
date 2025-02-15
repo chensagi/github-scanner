@@ -5,7 +5,7 @@ import (
 	"log"
 	"os"
 
-	"github.com/google/go-github/v55/github"
+	"github.com/google/go-github/v69/github"
 	"golang.org/x/oauth2"
 )
 

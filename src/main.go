@@ -25,6 +25,20 @@ func main() {
 
 	fmt.Println("Starting GitHub Scanner for org:", org)
 
+	// Example Rego policy: Ensure private repos have an admin
+	policy := `
+		package repository
+		import rego.v1
+
+		default allow = false
+
+		allow if {
+			input.visibility == "private"
+			some i
+			input.permissions[i].role == "admin"
+		}
+	`
+
 	// Fetch repositories and scan them
-	ScanOrganization(org)
+	ScanOrganization(org, policy)
 }
