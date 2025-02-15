@@ -3,9 +3,9 @@ package main
 import (
 	"context"
 	"fmt"
+	"time"
 	"log"
 	"strings"
-	"time"
 	"encoding/json"
 	pb "github-scanner/src/pb"
 
@@ -14,17 +14,21 @@ import (
 )
 
 const (
-	timeoutInSeconds = 3
-	serverAddress    = "localhost"
-	serverPort       = "50051"
+	serverAddress = "localhost"
+	serverPort    = "50051"
+	maxRetries    = 10               // Maximum number of retries
+	retryInterval = 2 * time.Second  // Wait time between retries
+	timeoutInSeconds = 5
 )
 
+var grpcClient pb.PolicyServiceClient
+
 type PolicySummary struct {
-	Policy      string
-	Success     bool  
-	Failure     bool   
-	Error       bool  
-	ErrorMessage string 
+    Policy         string
+    Error          bool
+    ErrorMessage   string
+    Success        bool
+    FailureCount   int
 }
 
 // List of Rego policies
@@ -65,129 +69,161 @@ var policies = []string{
 		input.permissions[i].role == "maintainer"
 	}
 	`, // Policy 3
-	`fdefsdfsd`,
+	`package repository
+
+	default allow = false
+	default deny = false
+	
+	# Allow access only for admins
+	allow {
+		input.user.role == "admin"
+	}
+	
+	# Deny access if the user is blacklisted
+	deny {
+		input.user.blacklisted == true
+	}`, // Policy 4
 }
 
 func main() {
-	// Connect to the gRPC server
-	client, conn := connectToServer()
+	conn, err := connectToServer()
+	if err != nil {
+		log.Fatalf("Error connecting to server: %v", err)
+	}
 	defer conn.Close()
 
-	// Invoke the policy scan and collect results
-	summaries := invokePolicyScan(client)
+	// Invoke the policy scan
+	summaries := invokePolicyScan(grpcClient)
 
 	// Print final summary
 	printFinalSummary(summaries)
 }
 
-// connectToServer establishes a gRPC client
-func connectToServer() (pb.PolicyServiceClient, *grpc.ClientConn) {
-	// Create a new gRPC client connection
-	clientConn, err := grpc.NewClient(fmt.Sprintf("%s:%s", serverAddress, serverPort),
-		grpc.WithTransportCredentials(insecure.NewCredentials()))
-	if err != nil {
-		log.Fatalf("Failed to connect to gRPC server at %s:%s: %v", serverAddress, serverPort, err)
+func connectToServer() (*grpc.ClientConn, error) {
+	var clientConn *grpc.ClientConn
+	var err error
+
+	for i := 0; i < maxRetries; i++ {
+		clientConn, err = grpc.Dial(fmt.Sprintf("%s:%s", serverAddress, serverPort),
+			grpc.WithTransportCredentials(insecure.NewCredentials()))
+		
+		if err == nil {
+			log.Println("Connected to gRPC server.")
+			grpcClient = pb.NewPolicyServiceClient(clientConn)
+			return clientConn, nil
+		}
+
+		log.Printf("Failed to connect to server (attempt %d/%d): %v", i+1, maxRetries, err)
+		time.Sleep(retryInterval)
 	}
 
-	log.Println("Connected to gRPC server.")
-
-	// Create and return the gRPC client
-	return pb.NewPolicyServiceClient(clientConn), clientConn
+	return nil, fmt.Errorf("failed to connect to server after %d retries", maxRetries)
 }
 
 func invokePolicyScan(client pb.PolicyServiceClient) []PolicySummary {
-	var summaries []PolicySummary
+    if client == nil {
+        log.Fatalf("gRPC client is not initialized")
+    }
 
-	for _, policy := range policies {
-		log.Printf("Scanning with policy:\n%s", policy)
+    var summaries []PolicySummary
 
-		ctx, cancel := context.WithTimeout(context.Background(), timeoutInSeconds*time.Second)
-		defer cancel()
+    for _, policy := range policies {
+        log.Printf("Scanning with policy:\n%s", policy)
 
-		// Call the gRPC function and get the response
-		res, err := client.ScanRepositories(ctx, &pb.PolicyRequest{Policy: policy})
+        ctx, cancel := context.WithTimeout(context.Background(), timeoutInSeconds*time.Second)
+        defer cancel()
 
-		// Debug: Print full gRPC response
-		if res != nil {
-			resJSON, _ := json.MarshalIndent(res, "", "  ")
-			log.Printf("Full gRPC Response:\n%s", resJSON)
-		} else {
-			log.Println("Response is nil")
-		}
+        res, err := client.ScanRepositories(ctx, &pb.PolicyRequest{Policy: policy})
+        if err != nil {
+            log.Printf("Error calling ScanRepositories: %v", err)
+            summaries = append(summaries, PolicySummary{
+                Policy:       strings.TrimSpace(policy),
+                Error:        true,
+                ErrorMessage: err.Error(),
+            })
+            continue // Skip to next policy if there's an error
+        }
 
-		summary := PolicySummary{Policy: strings.TrimSpace(policy)}
+        if res == nil {
+            log.Printf("Received nil response for policy: %s", policy)
+            summaries = append(summaries, PolicySummary{
+                Policy:       strings.TrimSpace(policy),
+                Error:        true,
+                ErrorMessage: "Nil response from server",
+            })
+            continue
+        }
 
-		// Detect error from res.Error OR from scan results that contain an error message
-		errorMessage := ""
-		if err != nil {
-			errorMessage = err.Error()
-		} else if res.Error != "" {
-			errorMessage = res.Error
-		}
+        // Debug: Print full gRPC response
+        resJSON, _ := json.MarshalIndent(res, "", "  ")
+        log.Printf("Full gRPC Response:\n%s", resJSON)
 
-		// Check if any repository's scan result contains an error
-		for _, repo := range res.Repositories {
-			if strings.Contains(strings.ToLower(repo.ScanResult), "error") || 
-			   strings.Contains(strings.ToLower(repo.ScanResult), "failed") {
-				errorMessage = fmt.Sprintf("%s | Scan Result: %s", errorMessage, repo.ScanResult)
-				break
-			}
-		}
+        // Initialize summary with a new field for counting failures
+        summary := PolicySummary{
+            Policy:       strings.TrimSpace(policy),
+            FailureCount: 0, // make sure your struct includes this integer field
+        }
 
-		if errorMessage != "" {
-			log.Printf("Error processing policy:\n%s\nError: %v", policy, errorMessage)
-			summary.Error = true
-			summary.ErrorMessage = errorMessage
-		} else {
-			// Process repositories and check their scan results
-			for _, repo := range res.Repositories {
-				result := strings.ToLower(repo.ScanResult)
+        // Check if gRPC response contains an error message
+        if res.Error != "" {
+            log.Printf("Server error for policy:\n%s\nError: %v", policy, res.Error)
+            summary.Error = true
+            summary.ErrorMessage = res.Error
+        } else {
+            // Process repositories and tally failures
+            for _, repo := range res.Repositories {
+                result := strings.ToLower(repo.ScanResult)
 
-				if result == "failure" {
-					summary.Failure = true
-				} else if result == "success" {
-					summary.Success = true
-				}
-			}
-		}
+                switch result {
+                case "failure":
+                    summary.FailureCount++
+                case "success":
+                    summary.Success = true
+                }
+            }
+        }
 
-		summaries = append(summaries, summary)
-	}
+        summaries = append(summaries, summary)
+    }
 
-	return summaries
+    return summaries
 }
 
 func printFinalSummary(summaries []PolicySummary) {
-	totalSuccess := 0
-	totalFailure := 0
-	totalError := 0
+    totalSuccess := 0
+    totalFailure := 0
+    totalError := 0
 
-	fmt.Println("\nFinal Summary of All Policies:")
-	fmt.Println("------------------------------------------------------------")
+    fmt.Println("\nFinal Summary of All Policies:")
+    fmt.Println("------------------------------------------------------------")
 
-	for _, summary := range summaries {
-		fmt.Println("Policy:")
-		fmt.Println(summary.Policy)
+    for _, summary := range summaries {
+        fmt.Println("Policy:")
+        fmt.Println(summary.Policy)
 
-		if summary.Error {
-			fmt.Printf("Result: ERROR - %s\n", summary.ErrorMessage)
-			totalError++
-		} else if summary.Failure {
-			fmt.Println("Result: FAILURE")
-			totalFailure++
-		} else if summary.Success {
-			fmt.Println("Result: SUCCESS")
-			totalSuccess++
-		} else {
-			fmt.Println("Result: ERROR (NO MATCHING CONDITION)")
-			totalError++
-		}
+        if summary.Error {
+            // If there's an overall policy error
+            fmt.Printf("Result: ERROR - %s\n", summary.ErrorMessage)
+            totalError++
+        } else if summary.FailureCount > 0 {
+            // If there are any repository failures under this policy
+            fmt.Printf("Result: FAILURE (Number of failing repos: %d)\n", summary.FailureCount)
+            totalFailure += summary.FailureCount
+        } else if summary.Success {
+            // If the policy has at least one success and no failures
+            fmt.Println("Result: SUCCESS")
+            totalSuccess++
+        } else {
+            // If there's no error, no failures, and no success reported
+            fmt.Println("Result: ERROR (NO MATCHING CONDITION)")
+            totalError++
+        }
 
-		fmt.Println("------------------------------------------------------------")
-	}
+        fmt.Println("------------------------------------------------------------")
+    }
 
-	// Print final count summary
-	fmt.Printf("Total Policies: %d\n", len(summaries))
-	fmt.Printf("Success: %d, Failure: %d, Error: %d\n", totalSuccess, totalFailure, totalError)
-	log.Println("Policy scanning completed.")
+    // Print final count summary
+    fmt.Printf("Total Policies: %d\n", len(summaries))
+    fmt.Printf("Success: %d, Failure: %d, Error: %d\n", totalSuccess, totalFailure, totalError)
+    log.Println("Policy scanning completed.")
 }

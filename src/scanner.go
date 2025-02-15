@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"strings"
 	"log"
 	"github.com/open-policy-agent/opa/v1/rego"
 	"github.com/google/go-github/v69/github"
@@ -34,13 +35,12 @@ type RepositoryInfo struct {
 	ScanResult    string                  `json:"scan_result"` 
 }
 
-// Function to evaluate a Rego policy against input data
 func evaluatePolicy(policy string, input interface{}) (bool, error) {
 	ctx := context.Background()
 
 	// Compile Rego policy
 	r := rego.New(
-		rego.Query("data.repository.allow"), // Query the `allow` rule
+		rego.Query("data.repository"), // Query the entire repository namespace
 		rego.Module("repository.rego", policy),
 		rego.Input(input),
 	)
@@ -56,14 +56,26 @@ func evaluatePolicy(policy string, input interface{}) (bool, error) {
 		return false, fmt.Errorf("failed to evaluate policy: %w", err)
 	}
 
-	// If policy result contains `allow = true`, return true
+	// Check if results exist
 	if len(rs) > 0 && len(rs[0].Expressions) > 0 {
-		result, ok := rs[0].Expressions[0].Value.(bool)
-		if ok && result {
-			return true, nil
+		// Extract the policy evaluation results
+		policyResults, ok := rs[0].Expressions[0].Value.(map[string]interface{})
+		if !ok {
+			return false, fmt.Errorf("invalid policy evaluation result format")
+		}
+
+		// Check for deny (deny takes precedence)
+		if deny, exists := policyResults["deny"].(bool); exists && deny {
+			return false, nil // Explicit deny
+		}
+
+		// Check for allow
+		if allow, exists := policyResults["allow"].(bool); exists && allow {
+			return true, nil // Explicit allow
 		}
 	}
 
+	// Default: deny if no explicit allow
 	return false, nil
 }
 
@@ -136,22 +148,28 @@ func ScanOrganization(org string, policy string) []RepositoryInfo {
 
 	log.Printf("Total repositories found: %d", len(allRepos))
 
-	// Process each repository
 	for _, repo := range allRepos {
 		repoInfo := scanRepository(ctx, org, repo)
 		log.Printf("Processing repository: %s", repoInfo.FullName)
-
+	
 		// Evaluate repository against policy
 		success, err := evaluatePolicy(policy, repoInfo)
+	
 		if err != nil {
-			log.Printf("Error evaluating policy for %s: %v", repoInfo.FullName, err)
-			repoInfo.ScanResult = err.Error() // Assign error message as ScanResult
+			log.Printf("Policy evaluation error for %s: %v", repoInfo.FullName, err)
+			
+			// Detect Rego parsing errors
+			if strings.Contains(err.Error(), "rego_parse_error") {
+				repoInfo.ScanResult = "Rego Parsing Error"
+			} else {
+				repoInfo.ScanResult = err.Error() // General error
+			}
 		} else if success {
 			repoInfo.ScanResult = "Success"
 		} else {
 			repoInfo.ScanResult = "Failure"
 		}
-
+	
 		// Store in list instead of printing immediately
 		scannedRepos = append(scannedRepos, repoInfo)
 	}
@@ -247,25 +265,4 @@ func NormalizeRepoData(repo *github.Repository, permissions []RepositoryPermissi
 		LastUpdated:   repo.GetUpdatedAt().String(),
 		Permissions:   permissions,
 	}
-}
-
-func printRepositoryInfo(repo RepositoryInfo) {
-	fmt.Printf("\nRepository: %-30s | Owner: %-15s | Visibility: %-10s | Scan Result: %-10s\n",
-		repo.FullName, repo.Owner, repo.Visibility, repo.ScanResult)
-
-	fmt.Printf("   URL: %s\n", repo.RepoURL)
-	fmt.Printf("   Description: %s\n", repo.Description)
-	fmt.Printf("   Last Updated: %s\n", repo.LastUpdated)
-	fmt.Printf("   Default Branch: %s\n", repo.DefaultBranch)
-
-	// Print permissions
-	fmt.Println("   Permissions:")
-	if len(repo.Permissions) == 0 {
-		fmt.Println("   - No collaborators found.")
-	} else {
-		for _, perm := range repo.Permissions {
-			fmt.Printf("   - User: %-20s | Role: %-10s | Source: %s\n", perm.Username, perm.Role, perm.Source)
-		}
-	}
-	fmt.Println("------------------------------------------------------------")
 }
