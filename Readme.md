@@ -1,7 +1,3 @@
-Below is a minimal README with **installation** instructions, how to run from the **command line**, and how to debug using **VS Code**.
-
----
-
 # GitHub Scanner (gRPC)
 
 A Go application that scans a GitHub organization's repositories against Rego policies via gRPC.
