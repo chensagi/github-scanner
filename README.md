@@ -1,6 +1,6 @@
 # GitHub Scanner (gRPC)
 
-A Go application that scans a GitHub organization's repositories against Rego policies via gRPC.
+A Go application that scans a GitHub organization's repositories against Rego policies using OPA.
 
 ## Installation
 
