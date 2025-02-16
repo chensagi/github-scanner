@@ -9,12 +9,11 @@ import (
 	pb "github-scanner/src/pb"
 )
 
-// Server struct for gRPC service
 type Server struct {
 	pb.UnimplementedPolicyServiceServer
 }
 
-// ScanRepositories triggers the GitHub scanner and returns repository results
+// triggers the GitHub scanner and returns repository results
 func (s *Server) ScanRepositories(ctx context.Context, req *pb.PolicyRequest) (*pb.PolicyResponse, error) {
 	log.Println("Received gRPC request to scan repositories...")
 
@@ -24,10 +23,8 @@ func (s *Server) ScanRepositories(ctx context.Context, req *pb.PolicyRequest) (*
 		return &pb.PolicyResponse{Error: "ORG_NAME environment variable is missing"}, nil
 	}
 
-	// Scan organization and collect results
 	repositories := ScanOrganizationForGRPC(org, req.Policy)
 
-	// Return structured response
 	return &pb.PolicyResponse{Repositories: repositories}, nil
 }
 

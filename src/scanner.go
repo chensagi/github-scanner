@@ -11,14 +11,14 @@ import (
     pb "github-scanner/src/pb"
 )
 
-// RepositoryPermissions stores structured permission data
+// permission data
 type RepositoryPermissions struct {
     Username string `json:"username"`
     Role     string `json:"role"`
     Source   string `json:"source"`
 }
 
-// RepositoryInfo stores structured repository data
+// repository data
 type RepositoryInfo struct {
     Name          string                  `json:"name"`
     FullName      string                  `json:"full_name"`
@@ -33,7 +33,7 @@ type RepositoryInfo struct {
     ScanResult    string                  `json:"scan_result"`
 }
 
-// ScanOrganizationForGRPC calls ScanOrganization and converts results for gRPC
+// calls ScanOrganization and converts results for gRPC
 func ScanOrganizationForGRPC(org string, policy string) []*pb.RepositoryInfo {
     scannedRepos := ScanOrganization(org, policy)
     var grpcRepos []*pb.RepositoryInfo
@@ -65,9 +65,9 @@ func ScanOrganizationForGRPC(org string, policy string) []*pb.RepositoryInfo {
     return grpcRepos
 }
 
-// ScanOrganization fetches repositories and evaluates them against the policy
+// fetches repositories and evaluates them against the policy
 func ScanOrganization(org string, policy string) []RepositoryInfo {
-    client := getGitHubClient() // 1) Obtain the client from github_client.go
+    client := getGitHubClient()
 
     ctx := context.Background()
     opt := &github.RepositoryListByOrgOptions{Type: "all"}
@@ -97,7 +97,7 @@ func ScanOrganization(org string, policy string) []RepositoryInfo {
 
     // Process each repository
     for _, repo := range allRepos {
-        repoInfo := scanRepository(ctx, org, repo, client) // pass client around
+        repoInfo := scanRepository(ctx, org, repo, client)
         log.Printf("Processing repository: %s", repoInfo.FullName)
 
         // Evaluate the repository against the policy
@@ -122,7 +122,7 @@ func ScanOrganization(org string, policy string) []RepositoryInfo {
     return scannedRepos
 }
 
-// scanRepository fetches repo metadata and permissions
+// fetches repo metadata and permissions
 func scanRepository(ctx context.Context, org string, repo *github.Repository, client *github.Client) RepositoryInfo {
     repoDetails, _, err := client.Repositories.Get(ctx, org, repo.GetName())
     if err != nil {
@@ -130,14 +130,14 @@ func scanRepository(ctx context.Context, org string, repo *github.Repository, cl
         return RepositoryInfo{}
     }
 
-    // Fetch collaborator/team permissions
+    // collaborator/team permissions
     permissions := FetchRepositoryPermissions(ctx, repoDetails, org, client)
 
     // Return normalized data
     return NormalizeRepoData(repoDetails, permissions)
 }
 
-// FetchRepositoryPermissions retrieves collaborator permissions for a repository
+// retrieves collaborator permissions for a repository
 func FetchRepositoryPermissions(ctx context.Context, repo *github.Repository, org string, client *github.Client) []RepositoryPermissions {
     owner := repo.GetOwner().GetLogin()
     repoName := repo.GetName()
@@ -230,7 +230,6 @@ func evaluatePolicy(policy string, input interface{}) (bool, error) {
     return false, nil
 }
 
-// NormalizeRepoData structures repository data
 func NormalizeRepoData(repo *github.Repository, permissions []RepositoryPermissions) RepositoryInfo {
     return RepositoryInfo{
         Name:          repo.GetName(),

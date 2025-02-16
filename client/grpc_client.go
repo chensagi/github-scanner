@@ -31,60 +31,6 @@ type PolicySummary struct {
     FailureCount   int
 }
 
-// // List of Rego policies
-// var policies = []string{
-// 	`
-// 	package repository
-// 	import rego.v1
-
-// 	default allow = false
-
-// 	allow if {
-// 		input.visibility == "private"
-// 		some i
-// 		input.permissions[i].role == "admin"
-// 	}
-// 	`, // Policy 1
-
-// 	`
-// 	package repository
-// 	import rego.v1
-
-// 	default allow = false
-
-// 	allow if {
-// 		input.owner == "Chensagics"
-// 	}
-// 	`, // Policy 2
-
-// 	`
-// 	package repository
-// 	import rego.v1
-
-// 	default allow = false
-
-// 	allow if {
-// 		input.private == false
-// 		some i
-// 		input.permissions[i].role == "maintainer"
-// 	}
-// 	`, // Policy 3
-// 	`package repository
-
-// 	default allow = false
-// 	default deny = false
-	
-// 	# Allow access only for admins
-// 	allow {
-// 		input.user.role == "admin"
-// 	}
-	
-// 	# Deny access if the user is blacklisted
-// 	deny {
-// 		input.user.blacklisted == true
-// 	}`, // Policy 4
-// }
-
 // List of Rego policies
 var policies = []string{
 	// Policy 1: Allow access if the repository is private and has an admin
@@ -279,7 +225,6 @@ func invokePolicyScan(client pb.PolicyServiceClient) []PolicySummary {
         resJSON, _ := json.MarshalIndent(res, "", "  ")
         log.Printf("Full gRPC Response:\n%s", resJSON)
 
-        // Initialize summary with a new field for counting failures
         summary := PolicySummary{
             Policy:       strings.TrimSpace(policy),
             FailureCount: 0,
