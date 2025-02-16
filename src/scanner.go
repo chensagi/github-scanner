@@ -35,49 +35,6 @@ type RepositoryInfo struct {
 	ScanResult    string                  `json:"scan_result"` 
 }
 
-func evaluatePolicy(policy string, input interface{}) (bool, error) {
-	ctx := context.Background()
-
-	// Compile Rego policy
-	r := rego.New(
-		rego.Query("data.repository"), // Query the entire repository namespace
-		rego.Module("repository.rego", policy),
-		rego.Input(input),
-	)
-
-	query, err := r.PrepareForEval(ctx)
-	if err != nil {
-		return false, fmt.Errorf("failed to prepare rego query: %w", err)
-	}
-
-	// Run the evaluation
-	rs, err := query.Eval(ctx)
-	if err != nil {
-		return false, fmt.Errorf("failed to evaluate policy: %w", err)
-	}
-
-	// Check if results exist
-	if len(rs) > 0 && len(rs[0].Expressions) > 0 {
-		// Extract the policy evaluation results
-		policyResults, ok := rs[0].Expressions[0].Value.(map[string]interface{})
-		if !ok {
-			return false, fmt.Errorf("invalid policy evaluation result format")
-		}
-
-		// Check for deny (deny takes precedence)
-		if deny, exists := policyResults["deny"].(bool); exists && deny {
-			return false, nil // Explicit deny
-		}
-
-		// Check for allow
-		if allow, exists := policyResults["allow"].(bool); exists && allow {
-			return true, nil // Explicit allow
-		}
-	}
-
-	// Default: deny if no explicit allow
-	return false, nil
-}
 
 // InitGitHubClient initializes the GitHub client once
 func InitGitHubClient() {
@@ -249,6 +206,50 @@ func FetchRepositoryPermissions(ctx context.Context, repo *github.Repository, or
 		})
 	}
 	return permissions
+}
+
+func evaluatePolicy(policy string, input interface{}) (bool, error) {
+	ctx := context.Background()
+
+	// Compile Rego policy
+	r := rego.New(
+		rego.Query("data.repository"), // Query the entire repository namespace
+		rego.Module("repository.rego", policy),
+		rego.Input(input),
+	)
+
+	query, err := r.PrepareForEval(ctx)
+	if err != nil {
+		return false, fmt.Errorf("failed to prepare rego query: %w", err)
+	}
+
+	// Run the evaluation
+	rs, err := query.Eval(ctx)
+	if err != nil {
+		return false, fmt.Errorf("failed to evaluate policy: %w", err)
+	}
+
+	// Check if results exist
+	if len(rs) > 0 && len(rs[0].Expressions) > 0 {
+		// Extract the policy evaluation results
+		policyResults, ok := rs[0].Expressions[0].Value.(map[string]interface{})
+		if !ok {
+			return false, fmt.Errorf("invalid policy evaluation result format")
+		}
+
+		// Check for deny (deny takes precedence)
+		if deny, exists := policyResults["deny"].(bool); exists && deny {
+			return false, nil // Explicit deny
+		}
+
+		// Check for allow
+		if allow, exists := policyResults["allow"].(bool); exists && allow {
+			return true, nil // Explicit allow
+		}
+	}
+
+	// Default: deny if no explicit allow
+	return false, nil
 }
 
 // NormalizeRepoData structures repository data, now with pre-fetched permissions
