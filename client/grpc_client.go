@@ -31,8 +31,63 @@ type PolicySummary struct {
     FailureCount   int
 }
 
+// // List of Rego policies
+// var policies = []string{
+// 	`
+// 	package repository
+// 	import rego.v1
+
+// 	default allow = false
+
+// 	allow if {
+// 		input.visibility == "private"
+// 		some i
+// 		input.permissions[i].role == "admin"
+// 	}
+// 	`, // Policy 1
+
+// 	`
+// 	package repository
+// 	import rego.v1
+
+// 	default allow = false
+
+// 	allow if {
+// 		input.owner == "Chensagics"
+// 	}
+// 	`, // Policy 2
+
+// 	`
+// 	package repository
+// 	import rego.v1
+
+// 	default allow = false
+
+// 	allow if {
+// 		input.private == false
+// 		some i
+// 		input.permissions[i].role == "maintainer"
+// 	}
+// 	`, // Policy 3
+// 	`package repository
+
+// 	default allow = false
+// 	default deny = false
+	
+// 	# Allow access only for admins
+// 	allow {
+// 		input.user.role == "admin"
+// 	}
+	
+// 	# Deny access if the user is blacklisted
+// 	deny {
+// 		input.user.blacklisted == true
+// 	}`, // Policy 4
+// }
+
 // List of Rego policies
 var policies = []string{
+	// Policy 1: Allow access if the repository is private and has an admin
 	`
 	package repository
 	import rego.v1
@@ -40,12 +95,13 @@ var policies = []string{
 	default allow = false
 
 	allow if {
-		input.visibility == "private"
+		input.private == true
 		some i
 		input.permissions[i].role == "admin"
 	}
-	`, // Policy 1
+	`, 
 
+	// Policy 2: Allow access if the repository owner is "Chensagics"
 	`
 	package repository
 	import rego.v1
@@ -55,8 +111,9 @@ var policies = []string{
 	allow if {
 		input.owner == "Chensagics"
 	}
-	`, // Policy 2
+	`, 
 
+	// Policy 3: Allow access if the repository is public and the user has "write" permission
 	`
 	package repository
 	import rego.v1
@@ -66,23 +123,87 @@ var policies = []string{
 	allow if {
 		input.private == false
 		some i
-		input.permissions[i].role == "maintainer"
+		input.permissions[i].role == "write"
 	}
-	`, // Policy 3
-	`package repository
+	`, 
+
+	// Policy 4: Allow access if the user belongs to a team that has repository permissions
+	`
+	package repository
+	import rego.v1
+
+	default allow = false
+
+	# Check if user has access via team permissions
+	allow if {
+		some i
+		input.permissions[i].source == "team"
+		input.permissions[i].username == input.user.username
+		input.permissions[i].role == "write"
+	}
+
+	# Check if user has admin role via team membership
+	allow if {
+		some i
+		input.permissions[i].source == "team"
+		input.permissions[i].username == input.user.username
+		input.permissions[i].role == "admin"
+	}
+	`,
+	// Policy 5: Deny access if the repository is private and the user is not the owner
+	`
+	package repository
+	import rego.v1
 
 	default allow = false
 	default deny = false
-	
-	# Allow access only for admins
-	allow {
-		input.user.role == "admin"
+
+	deny if {
+		input.private == true
+		input.user.username != input.owner
 	}
-	
-	# Deny access if the user is blacklisted
-	deny {
-		input.user.blacklisted == true
-	}`, // Policy 4
+	`, 
+
+	// Policy 6: Allow access if the repository is public and the user has at least "read" permission
+	`
+	package repository
+	import rego.v1
+
+	default allow = false
+
+	allow if {
+		input.private == false
+		some i
+		input.permissions[i].username == input.user.username
+		input.permissions[i].role == "read"
+	}
+	`, 
+
+	// Policy 7: Deny access to users who belong to the "gang" team, regardless of role
+	`
+	package repository
+	import rego.v1
+
+	default allow = false
+	default deny = false
+
+	deny if {
+		some i
+		input.permissions[i].username == input.user.username
+		startswith(input.permissions[i].source, "team:gang")
+	}
+	`,
+	// Policy 8: Allow access if the repository is public
+	`
+	package repository
+	import rego.v1
+
+	default allow = false
+
+	allow if {
+		input.private == false
+	}
+	`,
 }
 
 func main() {
@@ -161,7 +282,7 @@ func invokePolicyScan(client pb.PolicyServiceClient) []PolicySummary {
         // Initialize summary with a new field for counting failures
         summary := PolicySummary{
             Policy:       strings.TrimSpace(policy),
-            FailureCount: 0, // make sure your struct includes this integer field
+            FailureCount: 0,
         }
 
         // Check if gRPC response contains an error message
@@ -208,7 +329,7 @@ func printFinalSummary(summaries []PolicySummary) {
         } else if summary.FailureCount > 0 {
             // If there are any repository failures under this policy
             fmt.Printf("Result: FAILURE (Number of failing repos: %d)\n", summary.FailureCount)
-            totalFailure += summary.FailureCount
+            totalFailure++
         } else if summary.Success {
             // If the policy has at least one success and no failures
             fmt.Println("Result: SUCCESS")
