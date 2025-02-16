@@ -64,3 +64,26 @@ create `.vscode/launch.json` like this:
   ]
 }
 ```
+
+## Protobuf Generation
+
+If you change `src/pb.proto`, regenerate the `.pb.go` files like so:
+
+1. **Install** `protoc` (Protocol Buffers compiler) and the Go plugins:
+   ```bash
+   # Example for macOS:
+   brew install protobuf
+
+   go install google.golang.org/protobuf/cmd/protoc-gen-go@latest
+   go install google.golang.org/grpc/cmd/protoc-gen-go-grpc@latest
+   ```
+2. **Compile** from the src folder:
+   ```bash
+   cd src
+   protoc \
+     -I=src \
+     --go_out=src/pb --go-grpc_out=src/pb \
+     --go_opt=paths=source_relative --go-grpc_opt=paths=source_relative \
+     src/pb.proto
+   ```
+The generated code (`pb.pb.go` / `pb_grpc.pb.go`) will appear in `src/pb/`.
