@@ -18,9 +18,6 @@ type Server struct {
 func (s *Server) ScanRepositories(ctx context.Context, req *pb.PolicyRequest) (*pb.PolicyResponse, error) {
 	log.Println("Received gRPC request to scan repositories...")
 
-	// Initialize GitHub client
-	InitGitHubClient()
-
 	// Get organization name from environment
 	org := GetOrgNameFromEnv()
 	if org == "" {

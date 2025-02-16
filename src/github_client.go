@@ -1,23 +1,34 @@
 package main
 
 import (
-	"context"
-	"log"
-	"os"
+    "context"
+    "log"
+    "os"
+    "sync"
 
-	"github.com/google/go-github/v69/github"
-	"golang.org/x/oauth2"
+    "github.com/google/go-github/v69/github"
+    "golang.org/x/oauth2"
 )
 
-// getGitHubClient initializes a GitHub API client
+var (
+    gitHubClient     *github.Client
+    gitHubClientOnce sync.Once
+)
+
 func getGitHubClient() *github.Client {
-	token := os.Getenv("GITHUB_TOKEN")
-	if token == "" {
-		log.Fatal("GITHUB_TOKEN is missing. Set it in .env")
-	}
+    gitHubClientOnce.Do(func() {
+        token := os.Getenv("GITHUB_TOKEN")
+        if token == "" {
+            log.Fatal("GITHUB_TOKEN is missing. Set it in your environment.")
+        }
 
-	ts := oauth2.StaticTokenSource(&oauth2.Token{AccessToken: token})
-	tc := oauth2.NewClient(context.Background(), ts)
+        // Initialize a new OAuth2 client using the GitHub token
+        ts := oauth2.StaticTokenSource(&oauth2.Token{AccessToken: token})
+        tc := oauth2.NewClient(context.Background(), ts)
 
-	return github.NewClient(tc)
+        // Create and store the GitHub client
+        gitHubClient = github.NewClient(tc)
+        log.Println("Initialized GitHub client.")
+    })
+    return gitHubClient
 }
